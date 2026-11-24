@@ -222,6 +222,30 @@ describe(MutationTestReportHelper.name, () => {
         });
       });
 
+      it('should report the mutants of each file by id, whatever the order in which they finished', async () => {
+        // Arrange
+        fileSystemTestDouble.files['foo.js'] = '';
+        fileSystemTestDouble.files['bar.js'] = '';
+        const inputMutants = [
+          factory.killedMutantResult({ id: '10', fileName: 'bar.js' }),
+          factory.killedMutantResult({ id: '2', fileName: 'foo.js' }),
+          factory.killedMutantResult({ id: '9', fileName: 'bar.js' }),
+          factory.killedMutantResult({ id: '1', fileName: 'foo.js' }),
+        ];
+
+        // Act
+        const [actualReport] = await actReportAll(inputMutants);
+
+        // Assert
+        expect(Object.keys(actualReport.files)).deep.eq(['foo.js', 'bar.js']);
+        expect(
+          actualReport.files['foo.js'].mutants.map(({ id }) => id),
+        ).deep.eq(['1', '2']);
+        expect(
+          actualReport.files['bar.js'].mutants.map(({ id }) => id),
+        ).deep.eq(['9', '10']);
+      });
+
       it('should correctly map basic MutantResult properties', async () => {
         // Arrange
         const killedMutantResult: MutantResult = {
@@ -487,6 +511,42 @@ describe(MutationTestReportHelper.name, () => {
         const testFile = actualReport.testFiles![expectedRelativeName];
         expect(testFile.source).eq('it("should work")');
         expect(testFile.tests).lengthOf(1);
+      });
+
+      it('should number the tests by test file name and sort the test ids of each mutant, whatever the order in which the tests ran', async () => {
+        // Arrange
+        testCoverage.addTest(
+          factory.testResult({ id: 'b1', fileName: 'b.spec.js', name: 'b1' }),
+          factory.testResult({ id: 'a1', fileName: 'a.spec.js', name: 'a1' }),
+          factory.testResult({ id: 'b2', fileName: 'b.spec.js', name: 'b2' }),
+        );
+        fileSystemTestDouble.files['a.spec.js'] = '';
+        fileSystemTestDouble.files['b.spec.js'] = '';
+        fileSystemTestDouble.files['foo.js'] = '';
+        const mutant = factory.mutantResult({
+          fileName: 'foo.js',
+          killedBy: ['b1'],
+          coveredBy: ['b1', 'a1', 'b2'],
+        });
+
+        // Act
+        const [actualReport] = await actReportAll([mutant]);
+
+        // Assert
+        expect(Object.keys(actualReport.testFiles!)).deep.eq([
+          'a.spec.js',
+          'b.spec.js',
+        ]);
+        expect(actualReport.testFiles!['a.spec.js'].tests).deep.eq([
+          { id: '0', name: 'a1', location: undefined },
+        ]);
+        expect(actualReport.testFiles!['b.spec.js'].tests).deep.eq([
+          { id: '1', name: 'b1', location: undefined },
+          { id: '2', name: 'b2', location: undefined },
+        ]);
+        const [actualMutant] = actualReport.files['foo.js'].mutants;
+        expect(actualMutant.killedBy).deep.eq(['1']);
+        expect(actualMutant.coveredBy).deep.eq(['0', '1', '2']);
       });
 
       it('should log a warning the test file could not be found', async () => {

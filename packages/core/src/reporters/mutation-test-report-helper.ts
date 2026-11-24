@@ -233,21 +233,19 @@ export class MutationTestReportHelper {
     // Mocha, jest and karma use test titles as test ids.
     // This can mean a lot of duplicate strings in the json report.
     // Therefore we remap the test ids here to numbers.
+    const tests = sortByFileName([...this.testCoverage.testsById.values()]);
     const testIdMap = new Map(
-      [...this.testCoverage.testsById.values()].map((test, index) => [
-        test.id,
-        index.toString(),
-      ]),
+      tests.map((test, index) => [test.id, index.toString()]),
     );
     const remapTestId = (id: string): string => testIdMap.get(id) ?? id;
     const remapTestIds = (ids: string[] | undefined): string[] | undefined =>
-      ids?.map(remapTestId);
+      ids?.map(remapTestId).sort(compareNumeric);
 
     return {
-      files: await this.toFileResults(results, remapTestIds),
+      files: await this.toFileResults(sortById(results), remapTestIds),
       schemaVersion: '1.0',
       thresholds: this.options.thresholds,
-      testFiles: await this.toTestFiles(remapTestId),
+      testFiles: await this.toTestFiles(tests, remapTestId),
       projectRoot: process.cwd(),
       config: this.options,
       framework: {
@@ -281,17 +279,12 @@ export class MutationTestReportHelper {
   }
 
   private async toTestFiles(
+    tests: readonly TestResult[],
     remapTestId: (id: string) => string,
   ): Promise<schema.TestFileDefinitionDictionary> {
     const testFilesByName = new Map<string, schema.TestFile>(
       await Promise.all(
-        [
-          ...new Set(
-            [...this.testCoverage.testsById.values()].map(
-              ({ fileName }) => fileName,
-            ),
-          ),
-        ].map(
+        [...new Set(tests.map(({ fileName }) => fileName))].map(
           async (fileName) =>
             [
               normalizeReportFileName(fileName),
@@ -301,17 +294,18 @@ export class MutationTestReportHelper {
       ),
     );
 
-    return [
-      ...this.testCoverage.testsById.values(),
-    ].reduce<schema.TestFileDefinitionDictionary>((acc, testResult) => {
-      const test = this.toTestDefinition(testResult, remapTestId);
-      const reportFileName = normalizeReportFileName(testResult.fileName);
-      const testFile =
-        acc[reportFileName] ??
-        (acc[reportFileName] = testFilesByName.get(reportFileName)!);
-      testFile.tests.push(test);
-      return acc;
-    }, {});
+    return tests.reduce<schema.TestFileDefinitionDictionary>(
+      (acc, testResult) => {
+        const test = this.toTestDefinition(testResult, remapTestId);
+        const reportFileName = normalizeReportFileName(testResult.fileName);
+        const testFile =
+          acc[reportFileName] ??
+          (acc[reportFileName] = testFilesByName.get(reportFileName)!);
+        testFile.tests.push(test);
+        return acc;
+      },
+      {},
+    );
   }
 
   private async toFileResult(fileName: string): Promise<schema.FileResult> {
@@ -446,4 +440,27 @@ export function normalizeReportFileName(fileName: string | undefined) {
   }
   // File name is not required for test files. By default we accumulate tests under the '' key
   return '';
+}
+
+// The run finishes tests and mutants in a different order each time.
+// Sort them, so the same project gives the same report, test ids included.
+function sortByFileName(tests: TestResult[]): TestResult[] {
+  return tests.sort((a, b) =>
+    compareOrdinal(
+      normalizeReportFileName(a.fileName),
+      normalizeReportFileName(b.fileName),
+    ),
+  );
+}
+
+function sortById(results: readonly MutantResult[]): MutantResult[] {
+  return [...results].sort((a, b) => compareNumeric(a.id, b.id));
+}
+
+function compareNumeric(a: string, b: string): number {
+  return a.localeCompare(b, 'en', { numeric: true });
+}
+
+function compareOrdinal(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }
